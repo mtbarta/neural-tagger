@@ -1,0 +1,6 @@
+[global]
+floatX = float32
+optimizer=None
+device = gpu
+ncnmem=0.95
+
