@@ -1,7 +1,6 @@
 #!/usr/bin/python
 # -*- coding: utf8
 
-from src.base.models import SequentialModel
 import tensorflow as tf
 import numpy as np
 from src.util.tf import tensorToSeq, seqToTensor, revlut
@@ -49,7 +48,7 @@ def _xform(arr, words_vocab, chars_vocab, mxlen, maxw):
     return batch
 
 
-class DConv(SequentialModel):
+class DConv():
     def __init__(self, sess, name, version='1'):
         self.sess = sess
         self.name = name
@@ -199,13 +198,6 @@ class DConv(SequentialModel):
             for i in range(0, num_layers):
                 if i == num_layers-1:
                     dilation_rate = 1
-                # input_tensor = tf.layers.conv1d(input_tensor, num_filt, kernel_sz, 
-                #                                 padding='same', 
-                #                                 dilation_rate=dilation_rate**i, 
-                #                                 activation=None,
-                #                                 kernel_initializer=tf.orthogonal_initializer(), #tf.contrib.layers.xavier_initializer(),
-                #                                 reuse=reuse,
-                #                                 name='conv-'+ str(i))
                 filter_shape = [1, kernel_sz, num_filt, num_filt]
                 w = tf_utils.initialize_weights(filter_shape, 'conv-'+ str(i) + "_w", init_type=initialization, gain=nonlinearity, divisor=self.num_classes)
                 b = tf.get_variable('conv-'+ str(i) + "_b", initializer=tf.constant(0.0 if initialization == "identity" or initialization == "varscale" else 0.001, shape=[num_filt]))
@@ -218,7 +210,7 @@ class DConv(SequentialModel):
                 conv_b = tf.nn.bias_add(conv, b)
                 input_tensor = tf_utils.apply_nonlinearity(conv_b, "relu")
 
-                # tf.summary.histogram('conv-'+str(i), input_tensor)
+                tf.summary.histogram('conv-'+str(i), input_tensor)
                 # input_tensor = tf.nn.relu(input_tensor, name="relu-"+str(i))
 
             return input_tensor
@@ -264,6 +256,7 @@ class DConv(SequentialModel):
 
         intermediates = []
 
+
         if word_vec is not None:
             with tf.name_scope("WordLUT"):
                 Ww = tf.Variable(tf.constant(word_vec.weights, dtype=tf.float32), name = "W")
@@ -290,9 +283,9 @@ class DConv(SequentialModel):
         # joint = word_char if word_vec is None else tf.concat([wembed, word_char], 2)
         # joint = tf.nn.dropout(joint, self.word_keep)
 
-        input_dropout_keep_prob = 0.85
-        middle_dropout_keep_prob = 0.65
-        hidden_dropout_keep_prob = 0.85
+        input_dropout_keep_prob = self.word_keep
+        middle_dropout_keep_prob = 1.00
+        hidden_dropout_keep_prob = self.pkeep
 
         input_feats = tf.concat([wembed, word_char], 2)
         input_feats_expanded = tf.expand_dims(input_feats, 1)

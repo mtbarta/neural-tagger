@@ -243,7 +243,7 @@ class DConvTrainer:
                             if optim == 'adadelta':
                                 self.optimizer = tf.train.AdadeltaOptimizer(eta, 0.95, 1e-6)
                             elif optim == 'adam':
-                                self.optimizer = tf.train.AdamOptimizer(eta, beta2=.9)
+                                self.optimizer = tf.train.AdamOptimizer(eta, beta2=.9, epsilon=0.000001)
                             elif optim == 'sgd':
                                 self.optimizer = tf.train.GradientDescentOptimizer(eta)
                             else:

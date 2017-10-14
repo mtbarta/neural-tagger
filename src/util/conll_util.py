@@ -95,7 +95,7 @@ def conllSentsToIndices(filename, words_vocab, chars_vocab, mxlen, maxw, f2i, la
                 f2i[label] = idx
 
             ys[j] = f2i[label]
-            xs[j] = words_vocab.get(w, 0)
+            xs[j] = words_vocab.get(w, 1)
             for k in range(nch):
                 xs_ch[j,k] = chars_vocab.get(w[k], 0)
         ts.append({"x":xs,"y":ys, "xch": xs_ch, "id": i, "length": length })

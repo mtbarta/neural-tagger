@@ -1,7 +1,6 @@
 #!/usr/bin/python
 # -*- coding: utf8
 
-from src.base.models import SequentialModel
 import tensorflow as tf
 import numpy as np
 from src.util.tf import tensorToSeq, seqToTensor, revlut
@@ -48,7 +47,7 @@ def _xform(arr, words_vocab, chars_vocab, mxlen, maxw):
     return batch
 
 
-class DConv(SequentialModel):
+class DConv():
     def __init__(self, sess, name, version='1'):
         self.sess = sess
         self.name = name

@@ -199,10 +199,13 @@ class DConvTrainer:
                 num_layers=4,
                 num_iterations=3,
                 word_keep=0.85,
-                num_filt=64):
+                num_filt=64,
+                drop_words=0.85):
         self.model_name = name
         self.maxlen = maxlen
         self.maxw = maxw
+        self.drop_words = drop_words
+        self.vocab = word_vec.vocab
 
         #need to save into class for loss computation
         self.crf = crf
@@ -236,14 +239,14 @@ class DConvTrainer:
                         self.loss = self.createLoss(model)
             
                         self.global_step = tf.Variable(0, name='global_step', trainable=False)
-                        tvars = tf.trainable_variables()
+                        tvars = tf.global_variables()
                         grads, _ = tf.clip_by_global_norm(tf.gradients(self.loss, tvars), clip)
 
                         with tf.control_dependencies(update_ops):
                             if optim == 'adadelta':
                                 self.optimizer = tf.train.AdadeltaOptimizer(eta, 0.95, 1e-6)
                             elif optim == 'adam':
-                                self.optimizer = tf.train.AdamOptimizer(eta, beta2=.9)
+                                self.optimizer = tf.train.AdamOptimizer(eta, beta2=.999, epsilon=0.00001)
                             elif optim == 'sgd':
                                 self.optimizer = tf.train.GradientDescentOptimizer(eta)
                             else:
@@ -328,6 +331,12 @@ class DConvTrainer:
         for i in range(steps):
             si = shuffle[i]
             ts_i = batch(ts, si, batchsz)
+
+            if self.drop_words > 0.0:
+                word_probs = np.random.random(ts_i['x'].shape)
+                drop_indices = np.where((word_probs > self.drop_words) & (ts_i['x'] != self.vocab['<PAD>']))
+                ts_i['x'][drop_indices[0], drop_indices[1]] = self.vocab['<OOV>']
+
             feed_dict = model.ex2dict(ts_i, 1.0-dropout, True, word_keep)
         
             _, step, summary_str, lossv = sess.run([self.train_op, self.global_step, self.summary_op, self.loss], feed_dict=feed_dict)

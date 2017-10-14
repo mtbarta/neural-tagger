@@ -20,7 +20,8 @@ class Word2VecModel:
 
         uw = 0.0 if unifweight == None else unifweight
         self.vocab = {}
-        self.vocab["<PADDING>"] = 0
+        self.vocab["<PAD>"] = 0
+        self.vocab["<OOV>"] = 1
         with open(filename, "rb") as f:
             header = f.readline()
             vsz, self.dsz = map(int, header.split())
@@ -34,7 +35,7 @@ class Word2VecModel:
 
             self.weights = np.random.uniform(-uw, uw, (self.vsz+1, self.dsz))
             width = 4 * self.dsz
-            k = 1
+            k = 2
             # All attested word vectors
             for i in range(vsz):
                 word = readtospc(f)
