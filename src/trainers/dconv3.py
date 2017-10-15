@@ -253,8 +253,14 @@ class DConvTrainer:
                                 self.optimizer = tf.train.MomentumOptimizer(eta, 0.9)
 
                             # self.train_op = self.optimizer.minimize(self.loss, global_step=self.global_step)
-                        self.train_op = self.optimizer.apply_gradients(zip(grads, tvars),
-                                                                    global_step=self.global_step)
+                        # self.train_op = self.optimizer.apply_gradients(zip(grads, tvars),
+                        #                                            global_step=self.global_step)
+                        self.train_op = tf.contrib.layers.optimize_loss(self.loss,
+                                self.global_step,
+                                eta,
+                                self.optimizer,
+                                gradient_noise_scale=0.001,
+                                clip_gradients=5.0)
 
                         self.f1 = tf.Variable(0.0, name='f1')
                         self.f1_summary = tf.summary.scalar("f1", self.f1)
@@ -375,6 +381,7 @@ class DConvTrainer:
                         all_loss.append(self._computeWordLevelLoss(gold, mask, model, block))
 
         return tf.reduce_mean(all_loss)
+
 
     def _computeSentenceLevelLoss(self, gold, mask, lengths, model, probs):
         ll, model.A = tf.contrib.crf.crf_log_likelihood(probs, model.y, lengths)
