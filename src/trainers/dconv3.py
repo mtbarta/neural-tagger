@@ -236,11 +236,11 @@ class DConvTrainer:
                         update_ops = tf.get_collection(tf.GraphKeys.UPDATE_OPS)
 
                         self.evaluator = Evaluator(self.sess, model, model.y_lut, fscore)
-                        self.loss = self.createLoss(model)
+                        #self.loss = self.createLoss(model)
             
                         self.global_step = tf.Variable(0, name='global_step', trainable=False)
                         tvars = tf.global_variables()
-                        grads, _ = tf.clip_by_global_norm(tf.gradients(self.loss, tvars), clip)
+                        #grads, _ = tf.clip_by_global_norm(tf.gradients(model.loss, tvars), clip)
 
                         with tf.control_dependencies(update_ops):
                             if optim == 'adadelta':
@@ -255,7 +255,7 @@ class DConvTrainer:
                             # self.train_op = self.optimizer.minimize(self.loss, global_step=self.global_step)
                         # self.train_op = self.optimizer.apply_gradients(zip(grads, tvars),
                         #                                            global_step=self.global_step)
-                        self.train_op = tf.contrib.layers.optimize_loss(self.loss,
+                        self.train_op = tf.contrib.layers.optimize_loss(model.loss,
                                 self.global_step,
                                 eta,
                                 self.optimizer,
@@ -264,7 +264,7 @@ class DConvTrainer:
 
                         self.f1 = tf.Variable(0.0, name='f1')
                         self.f1_summary = tf.summary.scalar("f1", self.f1)
-                        self.loss_summary = tf.summary.scalar("loss", self.loss)
+                        #self.loss_summary = tf.summary.scalar("loss", model.loss)
                         self.summary_op = tf.summary.merge_all()
                         self.train_writer = tf.summary.FileWriter(self.outdir + "/train", self.sess.graph)
 
@@ -345,7 +345,7 @@ class DConvTrainer:
 
             feed_dict = model.ex2dict(ts_i, 1.0-dropout, True, word_keep)
         
-            _, step, summary_str, lossv = sess.run([self.train_op, self.global_step, self.summary_op, self.loss], feed_dict=feed_dict)
+            _, step, summary_str, lossv = sess.run([self.train_op, self.global_step, self.summary_op, model.loss], feed_dict=feed_dict)
             self.train_writer.add_summary(summary_str, step)
         
             total_loss += lossv

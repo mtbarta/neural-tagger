@@ -169,7 +169,7 @@ class DConv():
         }
 
     def createLoss(self):
-        with tf.variable_scope("Loss", reuse=None):
+        with tf.name_scope("Loss"):
             loss = tf.constant(0.0)
 
             gold = tf.cast(self.y, tf.float32)
@@ -180,22 +180,27 @@ class DConv():
 
             all_total = tf.reduce_sum(lengths, name="total")
 
-            block_scores = tf.unstack(self.intermediate_probs, axis=-1)
+            #block_scores = tf.unstack(self.intermediate_probs, axis=-1)
+            block_scores = self.intermediate_probs
+            print("block_sore length", len(block_scores))
 
-            block_no_dropout_scores = self.forward(1.0, 1.0, 1.0, reuse=True)
+            block_no_dropout_scores, _ = self.forward(1.0, 1.0, 1.0, reuse=True)
+            print("block_score_no_dropout length", len(block_no_dropout_scores))
 
+            print("block_score length after anothe fwd", len(block_scores))
             all_loss = []
             for block, block_no_drop in zip(block_scores, block_no_dropout_scores):
+                print(block.get_shape())
                 # reuse = i != 0
                 # with tf.variable_scope('block', reuse=reuse):
                 if self.crf is True:
                     print('crf=True, creating SLL')
-                    viterbi_loss = self._computeSentenceLevelLoss(gold, mask, lengths, model, block)
+                    viterbi_loss = self._computeSentenceLevelLoss(self.y, mask, lengths, None, block)
                     all_loss.append(viterbi_loss)
                 else:
                     print('crf=False, creating WLL')
-                    all_loss.append(self._computeWordLevelLoss(gold, mask, model, block))
-                drop_loss = tf.nn.l2_loss(tf.subtract(block, block_no_drop))
+                    all_loss.append(self._computeWordLevelLoss(gold, mask, None, block))
+                l2_loss = tf.nn.l2_loss(tf.subtract(block, block_no_drop))
                 loss += self.drop_penalty * l2_loss
 
             loss += tf.reduce_mean(all_loss)
@@ -204,13 +209,16 @@ class DConv():
 
 
     def _computeSentenceLevelLoss(self, gold, mask, lengths, model, probs):
-        zero_elements = tf.equal(lengths, tf.zeros_like(lengths))
-        count_zeros_per_row = tf.reduce_sum(tf.to_int32(zero_elements), axis=1)
-        flat_sequence_lengths = tf.add(tf.reduce_sum(lengths, 1),
-                                       tf.scalar_mul(2, count_zeros_per_row))
-        ll, A = tf.contrib.crf.crf_log_likelihood(probs, gold, flat_sequence_lengths, transition_params=self.A)
+        #zero_elements = tf.equal(lengths, tf.zeros_like(lengths))
+        #count_zeros_per_row = tf.reduce_sum(tf.to_int32(zero_elements), axis=1)
+        #flat_sequence_lengths = tf.add(tf.reduce_sum(lengths, 1),
+        #                               tf.scalar_mul(2, count_zeros_per_row))
+        print(probs.get_shape())
+        print(lengths.get_shape())
+        print(gold.get_shape())
+        ll, A = tf.contrib.crf.crf_log_likelihood(probs, gold, lengths, transition_params=self.A)
         # print(model.probs)
-        all_total = tf.reduce_sum(lengths, name="total")
+        #all_total = tf.reduce_sum(lengths, name="total")
         return tf.reduce_mean(-ll)
 
     def _computeWordLevelLoss(self, gold, mask, model, probs):
@@ -260,6 +268,10 @@ class DConv():
                 kernel_size=3, num_layers=4, num_iterations=3, 
                 crf=False):
 
+        self.num_iterations = num_iterations
+        self.num_layers = num_layers
+        self.kernel_size = kernel_size
+        self.num_filt = num_filt
         self.crf = crf
         char_dsz = char_vec.dsz
         nc = len(labels)
@@ -285,14 +297,14 @@ class DConv():
         self.drop_penalty = 0.001
 
         
-        self.A = tf.get_variable("transitions", [num_classes, num_classes])
+        self.A = tf.get_variable("transitions", [self.num_classes, self.num_classes])
         # if num_filt != nc:
         #     raise RuntimeError('number of filters needs to be equal to number of classes!')
 
         self.filtsz = [int(filt) for filt in filtsz.split(',') ]
 
         with tf.variable_scope('output/'):
-            W = tf.Variable(tf.truncated_normal([num_filt, nc],
+            W = tf.Variable(tf.truncated_normal([self.num_filt, nc],
                                                 stddev = 0.1), name="W")
             # W = tf.get_variable('W', initializer=tf.contrib.layers.xavier_initializer(), shape=[num_filt, nc])
             b = tf.Variable(tf.constant(0.0, shape=[1,nc]), name="b")
@@ -304,12 +316,12 @@ class DConv():
             with tf.name_scope("WordLUT"):
                 self.Ww = tf.Variable(tf.constant(word_vec.weights, dtype=tf.float32), name = "W")
 
-                self.we0 = tf.scatter_update(Ww, tf.constant(0, dtype=tf.int32, shape=[1]), tf.zeros(shape=[1, word_vec.dsz]))
+                self.we0 = tf.scatter_update(self.Ww, tf.constant(0, dtype=tf.int32, shape=[1]), tf.zeros(shape=[1, word_vec.dsz]))
 
         with tf.name_scope("CharLUT"):
             self.Wc = tf.Variable(tf.constant(char_vec.weights, dtype=tf.float32), name = "W")
 
-            self.ce0 = tf.scatter_update(self.Wc, tf.constant(0, dtype=tf.int32, shape=[1]), tf.zeros(shape=[1, char_dsz]))
+            self.ce0 = tf.scatter_update(self.Wc, tf.constant(0, dtype=tf.int32, shape=[1]), tf.zeros(shape=[1, self.char_dsz]))
 
         self.input_dropout_keep_prob = self.word_keep
         self.middle_dropout_keep_prob = 1.00
@@ -320,7 +332,7 @@ class DConv():
                             self.middle_dropout_keep_prob, 
                             reuse=False)
 
-        self.loss = createLoss()
+        self.loss = self.createLoss()
 
 
     def forward(self, hidden_keep, input_keep, middle_keep, reuse=True):
@@ -340,7 +352,7 @@ class DConv():
                 xch_seq = tensorToSeq(self.xch)
                 cembed_seq = []
                 for i, xch_i in enumerate(xch_seq):
-                    cembed_seq.append(shared_char_word(self.Wc, xch_i, self.filtsz, self.char_dsz, self.wsz, None if i == 0 else True))
+                    cembed_seq.append(shared_char_word(self.Wc, xch_i, self.filtsz, self.char_dsz, self.wsz, None if (i == 0 and not reuse)  else True))
                 word_char = seqToTensor(cembed_seq)
 
             input_feats = tf.concat([wembed, word_char], 2)
@@ -348,15 +360,15 @@ class DConv():
             input_feats_expanded_drop = tf.nn.dropout(input_feats_expanded, self.input_dropout_keep_prob)
 
             # first projection of embeddings
-            filter_shape = [1, kernel_size, input_feats.get_shape()[2], num_filt]
+            filter_shape = [1, self.kernel_size, input_feats.get_shape()[2], self.num_filt]
 
             w = tf_utils.initialize_weights(filter_shape, "conv_start" + "_w", init_type='xavier', gain='relu')
-            b = tf.get_variable("conv_start" + "_b", initializer=tf.constant(0.01, shape=[num_filt]))
+            b = tf.get_variable("conv_start" + "_b", initializer=tf.constant(0.01, shape=[self.num_filt]))
             conv0 = tf.nn.conv2d(input_feats_expanded_drop, w, strides=[1, 1, 1, 1], padding="SAME", name="conv_start")
             h0 = tf_utils.apply_nonlinearity(tf.nn.bias_add(conv0, b), 'relu')
 
             initial_inputs = [h0]
-            last_dims = filtsz
+            last_dims = self.num_filt
 
             self.share_repeats = True
             self.projection = False
@@ -364,15 +376,15 @@ class DConv():
             # Stacked atrous convolutions
             last_output = tf.concat(axis=3, values=initial_inputs)
 
-            for iteration in range(num_iterations):
+            for iteration in range(self.num_iterations):
                 hidden_outputs = []
-                total_output_width = num_filt
+                total_output_width = self.num_filt
                 reuse_block = (iteration != 0)
                 block_name_suff = "" if self.share_repeats else str(block)
                 inner_last_dims = last_dims
                 inner_last_output = last_output
                 with tf.variable_scope("block" + block_name_suff, reuse=reuse_block):
-                    block_output = self.block(inner_last_output, kernel_size, num_filt, num_layers, reuse=reuse_block)
+                    block_output = self.block(inner_last_output, self.kernel_size, self.num_filt, self.num_layers, reuse=reuse_block)
 
                     #legacy strubell logic. we only grab the last layer of the block here. always.
                     h_concat = tf.concat(axis=3, values=[block_output])
