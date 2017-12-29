@@ -356,50 +356,50 @@ class DConvTrainer:
     def test(self, ts, batchsz, phase='Test', conll_file=None, txts=None):
         return self.evaluator.test(ts, batchsz, phase, conll_file, txts)
 
-    def createLoss(self, model):
+    # def createLoss(self, model):
         
-        with tf.variable_scope("Loss", reuse=None):
-            gold = tf.cast(model.y, tf.float32)
-            mask = tf.sign(gold)
+    #     with tf.variable_scope("Loss", reuse=None):
+    #         gold = tf.cast(model.y, tf.float32)
+    #         mask = tf.sign(gold)
 
-            lengths = tf.reduce_sum(mask, name="lengths",
-                                    reduction_indices=1)
+    #         lengths = tf.reduce_sum(mask, name="lengths",
+    #                                 reduction_indices=1)
 
-            all_total = tf.reduce_sum(lengths, name="total")
+    #         all_total = tf.reduce_sum(lengths, name="total")
 
-            block_probs = tf.unstack(model.intermediate_probs, axis=-1)
+    #         block_probs = tf.unstack(model.intermediate_probs, axis=-1)
 
-            all_loss = []
-            for i, block in enumerate(block_probs):
-                reuse = i != 0
-                with tf.variable_scope('block', reuse=reuse):
-                    if self.crf is True:
-                        print('crf=True, creating SLL')
-                        all_loss.append(self._computeSentenceLevelLoss(gold, mask, lengths, model, block))
-                    else:
-                        print('crf=False, creating WLL')
-                        all_loss.append(self._computeWordLevelLoss(gold, mask, model, block))
+    #         all_loss = []
+    #         for i, block in enumerate(block_probs):
+    #             reuse = i != 0
+    #             with tf.variable_scope('block', reuse=reuse):
+    #                 if self.crf is True:
+    #                     print('crf=True, creating SLL')
+    #                     all_loss.append(self._computeSentenceLevelLoss(gold, mask, lengths, model, block))
+    #                 else:
+    #                     print('crf=False, creating WLL')
+    #                     all_loss.append(self._computeWordLevelLoss(gold, mask, model, block))
 
-        return tf.reduce_mean(all_loss)
+    #     return tf.reduce_mean(all_loss)
 
 
-    def _computeSentenceLevelLoss(self, gold, mask, lengths, model, probs):
-        ll, model.A = tf.contrib.crf.crf_log_likelihood(probs, model.y, lengths)
-        # print(model.probs)
-        all_total = tf.reduce_sum(lengths, name="total")
-        return tf.reduce_mean(-ll)
+    # def _computeSentenceLevelLoss(self, gold, mask, lengths, model, probs):
+    #     ll, model.A = tf.contrib.crf.crf_log_likelihood(probs, model.y, lengths)
+    #     # print(model.probs)
+    #     all_total = tf.reduce_sum(lengths, name="total")
+    #     return tf.reduce_mean(-ll)
 
-    def _computeWordLevelLoss(self, gold, mask, model, probs):
+    # def _computeWordLevelLoss(self, gold, mask, model, probs):
 
-        nc = len(model.labels)
-        # Cross entropy loss
-        cross_entropy = tf.one_hot(model.y, nc, axis=-1) * tf.log(
-            tf.clip_by_value(tf.nn.softmax(probs), 1e-10, 5.0))
-        cross_entropy = -tf.reduce_sum(cross_entropy, reduction_indices=2)
-        cross_entropy *= mask
-        cross_entropy = tf.reduce_sum(cross_entropy, reduction_indices=1)
-        all_loss = tf.reduce_mean(cross_entropy, name="loss")
-        return all_loss
+    #     nc = len(model.labels)
+    #     # Cross entropy loss
+    #     cross_entropy = tf.one_hot(model.y, nc, axis=-1) * tf.log(
+    #         tf.clip_by_value(tf.nn.softmax(probs), 1e-10, 5.0))
+    #     cross_entropy = -tf.reduce_sum(cross_entropy, reduction_indices=2)
+    #     cross_entropy *= mask
+    #     cross_entropy = tf.reduce_sum(cross_entropy, reduction_indices=1)
+    #     all_loss = tf.reduce_mean(cross_entropy, name="loss")
+    #     return all_loss
 
     def saveUsing(self, saver):
         self.saver = saver

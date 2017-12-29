@@ -377,59 +377,86 @@ class DConv():
             last_output = tf.concat(axis=3, values=initial_inputs)
 
             for iteration in range(self.num_iterations):
-                hidden_outputs = []
-                total_output_width = self.num_filt
-                reuse_block = (iteration != 0)
-                block_name_suff = "" if self.share_repeats else str(block)
-                inner_last_dims = last_dims
-                inner_last_output = last_output
-                with tf.variable_scope("block" + block_name_suff, reuse=reuse_block):
-                    block_output = self.block(inner_last_output, self.kernel_size, self.num_filt, self.num_layers, reuse=reuse_block)
-
-                    #legacy strubell logic. we only grab the last layer of the block here. always.
-                    h_concat = tf.concat(axis=3, values=[block_output])
-                    last_output = tf.nn.dropout(h_concat, self.middle_dropout_keep_prob)
-                    last_dims = total_output_width
-
-                    h_concat_squeeze = tf.squeeze(h_concat, [1])
-
-                    h_concat_flat = tf.reshape(h_concat_squeeze, [-1, total_output_width])
-
-
-                    # Add dropout
-                    with tf.name_scope("hidden_dropout"):
-                        h_drop = tf.nn.dropout(h_concat_flat, self.hidden_dropout_keep_prob)
-
-                    def do_projection():
-                        # Project raw outputs down
-                        with tf.name_scope("projection"):
-                            projection_width = int(total_output_width/(2*len(hidden_outputs)))
-                            w_p = tf_utils.initialize_weights([total_output_width, projection_width], "w_p", init_type="xavier")
-                            b_p = tf.get_variable("b_p", initializer=tf.constant(0.01, shape=[projection_width]))
-                            projected = tf.nn.xw_plus_b(h_drop, w_p, b_p, name="projected")
-                            projected_nonlinearity = tf_utils.apply_nonlinearity(projected, self.nonlinearity)
-                        return projected_nonlinearity, projection_width
-
-                    # only use projection if we wanted to, and only apply middle dropout here if projection
-                    input_to_pred, proj_width = do_projection() if self.projection else (h_drop, total_output_width)
-                    input_to_pred_drop = tf.nn.dropout(input_to_pred, self.middle_dropout_keep_prob) if self.projection else input_to_pred
-
-                    # Final (unnormalized) scores and predictions
-                    with tf.name_scope("output"+block_name_suff):
-                        w_o = tf_utils.initialize_weights([proj_width, self.num_classes], "w_o", init_type="xavier")
-                        b_o = tf.get_variable("b_o", initializer=tf.constant(0.01, shape=[self.num_classes]))
-                        self.l2_loss += tf.nn.l2_loss(w_o)
-                        self.l2_loss += tf.nn.l2_loss(b_o)
-                        scores = tf.nn.xw_plus_b(input_to_pred_drop, w_o, b_o, name="scores")
-
-                        unflat_scores = tf.reshape(scores, tf.stack([-1, self.mxlen, self.num_classes]))
-
-                        block_unflat_scores.append(unflat_scores)
-
-                        # probs = unflat_scores
-                        # best = tf.argmax(self.probs, 2)
-                        # intermediate_probs = tf.stack(block_unflat_scores, -1)
+                unflat_scores, h_concat_squeeze, last_output, last_dims = self.compute_block(last_output, last_dims)
+                block_unflat_scores.append(unflat_scores)
+                
         return block_unflat_scores, unflat_scores
+
+    def compute_block(self, last_output, last_dims):
+        hidden_outputs = []
+
+        total_output_width = 0
+        reuse_block = (block != 0 and self.share_repeats) or reuse
+        block_name_suff = "" if self.share_repeats else str(block)
+        inner_last_dims = last_dims
+        inner_last_output = last_output
+        with tf.variable_scope("block" + block_name_suff, reuse=reuse_block):
+            for layer_name, layer in self.layers_map:
+                dilation = layer['dilation']
+                filter_width = layer['width']
+                num_filters = layer['filters']
+                initialization = layer['initialization']
+                take_layer = layer['take']
+                if not reuse:
+                    print("Adding layer %s: dilation: %d; width: %d; filters: %d; take: %r" % (
+                    layer_name, dilation, filter_width, num_filters, take_layer))
+                with tf.name_scope("atrous-conv-%s" % layer_name):
+                    # [filter_height, filter_width, in_channels, out_channels]
+                    filter_shape = [1, filter_width, inner_last_dims, num_filters]
+                    w = tf_utils.initialize_weights(filter_shape, layer_name + "_w", init_type=initialization, gain=self.nonlinearity, divisor=self.num_classes)
+                    b = tf.get_variable(layer_name + "_b", initializer=tf.constant(0.0 if initialization == "identity" or initialization == "varscale" else 0.001, shape=[num_filters]))
+                    # h = tf_utils.residual_layer(inner_last_output, w, b, dilation, self.nonlinearity, self.batch_norm, layer_name + "_r",
+                    #                             self.batch_size, max_seq_len, self.res_activation, self.training) \
+                    #     if last_output != input_feats_expanded_drop \
+                    #     else tf_utils.residual_layer(inner_last_output, w, b, dilation, self.nonlinearity, False, layer_name + "_r",
+                    #                             self.batch_size, max_seq_len, 0, self.training)
+
+                    conv = tf.nn.atrous_conv2d(inner_last_output, w, rate=dilation, padding="SAME", name=layer_name)
+                    conv_b = tf.nn.bias_add(conv, b)
+                    h = tf_utils.apply_nonlinearity(conv_b, self.nonlinearity)
+
+                    # so, only apply "take" to last block (may want to change this later)
+                    if take_layer:
+                        hidden_outputs.append(h)
+                        total_output_width += num_filters
+                    inner_last_dims = num_filters
+                    inner_last_output = h
+
+            h_concat = tf.concat(axis=3, values=hidden_outputs)
+            last_output = tf.nn.dropout(h_concat, middle_dropout_keep_prob)
+            last_dims = total_output_width
+
+            h_concat_squeeze = tf.squeeze(h_concat, [1])
+            h_concat_flat = tf.reshape(h_concat_squeeze, [-1, total_output_width])
+
+            # Add dropout
+            with tf.name_scope("hidden_dropout"):
+                h_drop = tf.nn.dropout(h_concat_flat, hidden_dropout_keep_prob)
+
+            def do_projection():
+                # Project raw outputs down
+                with tf.name_scope("projection"):
+                    projection_width = int(total_output_width/(2*len(hidden_outputs)))
+                    w_p = tf_utils.initialize_weights([total_output_width, projection_width], "w_p", init_type="xavier")
+                    b_p = tf.get_variable("b_p", initializer=tf.constant(0.01, shape=[projection_width]))
+                    projected = tf.nn.xw_plus_b(h_drop, w_p, b_p, name="projected")
+                    projected_nonlinearity = tf_utils.apply_nonlinearity(projected, self.nonlinearity)
+                return projected_nonlinearity, projection_width
+
+            # only use projection if we wanted to, and only apply middle dropout here if projection
+            input_to_pred, proj_width = do_projection() if self.projection else (h_drop, total_output_width)
+            input_to_pred_drop = tf.nn.dropout(input_to_pred, middle_dropout_keep_prob) if self.projection else input_to_pred
+
+            # Final (unnormalized) scores and predictions
+            with tf.name_scope("output"+block_name_suff):
+                w_o = tf_utils.initialize_weights([proj_width, self.num_classes], "w_o", init_type="xavier")
+                b_o = tf.get_variable("b_o", initializer=tf.constant(0.01, shape=[self.num_classes]))
+                self.l2_loss += tf.nn.l2_loss(w_o)
+                self.l2_loss += tf.nn.l2_loss(b_o)
+                scores = tf.nn.xw_plus_b(input_to_pred_drop, w_o, b_o, name="scores")
+                unflat_scores = tf.reshape(scores, tf.stack([self.batch_size, max_seq_len, self.num_classes]))
+
+        return unflat_scores, h_concat_squeeze, last_output, last_dims
 
 def log(tensor):
         print(tensor)

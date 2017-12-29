@@ -1,8 +1,6 @@
 #!/usr/bin/python
 # -*- coding: utf8
 
-#taken from https://github.com/iesl/dilated-cnn-ner
-from src.base.models import SequentialModel
 import tensorflow as tf
 import numpy as np
 from src.util.tf import tensorToSeq, seqToTensor, revlut
@@ -12,6 +10,7 @@ from tensorflow.python.platform import gfile
 import json
 import os
 from collections import defaultdict
+import src.models.tf_utils as tf_utils
 
 from src.models.initializers import identity_initializer, orthogonal_initializer
 
@@ -49,98 +48,11 @@ def _xform(arr, words_vocab, chars_vocab, mxlen, maxw):
     return batch
 
 
-class DConv(SequentialModel):
-    def __init__(self, num_classes, vocab_size, shape_domain_size, char_domain_size, char_size, embedding_size,
-                 shape_size, nonlinearity, layers_map, viterbi, projection, loss, margin, repeats, share_repeats,
-                 char_embeddings, embeddings=None):
+class DConv():
+    def __init__(self, sess, name, version='1'):
         self.sess = sess
         self.name = name
         self.version = version
-
-        self.num_classes = num_classes
-        self.shape_domain_size = shape_domain_size
-        self.char_domain_size = char_domain_size
-        self.char_size = char_size
-        self.embedding_size = embedding_size
-        self.shape_size = shape_size
-        self.nonlinearity = nonlinearity
-        self.layers_map = layers_map
-        self.projection = projection
-        self.which_loss = loss
-        self.margin = margin
-        self.char_embeddings = char_embeddings
-        self.repeats = repeats
-        self.viterbi = viterbi
-        self.share_repeats = share_repeats
-
-        # word embedding input
-        self.input_x1 = tf.placeholder(tf.int64, [None, None], name="input_x1")
-
-        # shape embedding input
-        self.input_x2 = tf.placeholder(tf.int64, [None, None], name="input_x2")
-
-        # labels
-        self.input_y = tf.placeholder(tf.int64, [None, None], name="input_y")
-
-        # padding mask
-        self.input_mask = tf.placeholder(tf.float32, [None, None], name="input_mask")
-
-        # dims
-        self.batch_size = tf.placeholder(tf.int32, None, name="batch_size")
-        self.max_seq_len = tf.placeholder(tf.int32, None, name="max_seq_len")
-
-        # sequence lengths
-        self.sequence_lengths = tf.placeholder(tf.int32, [None, None], name="sequence_lengths")
-
-        # dropout and l2 penalties
-        self.hidden_dropout_keep_prob = tf.placeholder_with_default(1.0, [], name="hidden_dropout_keep_prob")
-        self.input_dropout_keep_prob = tf.placeholder_with_default(1.0, [], name="input_dropout_keep_prob")
-        self.middle_dropout_keep_prob = tf.placeholder_with_default(1.0, [], name="middle_dropout_keep_prob")
-        self.training = tf.placeholder_with_default(False, [], name="training")
-
-        self.l2_penalty = tf.placeholder_with_default(0.0, [], name="l2_penalty")
-        self.drop_penalty = tf.placeholder_with_default(0.0, [], name="drop_penalty")
-
-        self.l2_loss = tf.constant(0.0)
-
-        self.use_characters = char_size != 0
-        self.use_shape = shape_size != 0
-
-        self.ones = tf.ones([self.batch_size, self.max_seq_len, self.num_classes])
-
-        if self.viterbi:
-            self.transition_params = tf.get_variable("transitions", [num_classes, num_classes])
-
-        word_embeddings_shape = (vocab_size-1, embedding_size)
-        self.w_e = tf_utils.initialize_embeddings(word_embeddings_shape, name="w_e", pretrained=embeddings, old=False)
-
-        self.block_unflat_scores, self.hidden_layer = self.forward(self.input_x1, self.input_x2, self.max_seq_len,
-                                          self.hidden_dropout_keep_prob,
-                                          self.input_dropout_keep_prob, self.middle_dropout_keep_prob, reuse=False)
-
-        # CalculateMean cross-entropy loss
-        with tf.name_scope("loss"):
-
-            self.loss = tf.constant(0.0)
-
-            self.block_unflat_no_dropout_scores, _ = self.forward(self.input_x1, self.input_x2, self.max_seq_len, 1.0, 1.0, 1.0)
-
-            labels = tf.cast(self.input_y, 'int32')
-
-            if self.which_loss == "block":
-                for unflat_scores, unflat_no_dropout_scores in zip(self.block_unflat_scores, self.block_unflat_no_dropout_scores):
-                    self.loss += self.compute_loss(unflat_scores, unflat_no_dropout_scores, labels)
-                self.unflat_scores = self.block_unflat_scores[-1]
-            else:
-                self.unflat_scores = self.block_unflat_scores[-1]
-                self.unflat_no_dropout_scores = self.block_unflat_no_dropout_scores[-1]
-                self.loss = self.compute_loss(self.unflat_scores, self.unflat_no_dropout_scores, labels)
-
-        with tf.name_scope("predictions"):
-            if viterbi:
-                self.predictions = self.unflat_scores
-            else:
-				self.predictions = tf.argmax(self.unflat_scores, 2)
 
     def predict(self, batch, xform=True, training_phase=False, word_keep=1.0):
         if not isinstance(batch, dict):
@@ -256,64 +168,219 @@ class DConv(SequentialModel):
             self.phase: phase
         }
 
-    def forward(self, input_x1, input_x2, max_seq_len, hidden_dropout_keep_prob, input_dropout_keep_prob,
-                middle_dropout_keep_prob, reuse=True):
+    def createLoss(self):
+        with tf.name_scope("Loss"):
+            loss = tf.constant(0.0)
 
+            gold = tf.cast(self.y, tf.float32)
+            mask = tf.sign(gold)
+
+            lengths = tf.reduce_sum(mask, name="lengths",
+                                    reduction_indices=1)
+
+            all_total = tf.reduce_sum(lengths, name="total")
+
+            #block_scores = tf.unstack(self.intermediate_probs, axis=-1)
+            block_scores = self.intermediate_probs
+            print("block_sore length", len(block_scores))
+
+            block_no_dropout_scores, _ = self.forward(1.0, 1.0, 1.0, reuse=True)
+            print("block_score_no_dropout length", len(block_no_dropout_scores))
+
+            print("block_score length after anothe fwd", len(block_scores))
+            all_loss = []
+            for block, block_no_drop in zip(block_scores, block_no_dropout_scores):
+                print(block.get_shape())
+                # reuse = i != 0
+                # with tf.variable_scope('block', reuse=reuse):
+                if self.crf is True:
+                    print('crf=True, creating SLL')
+                    viterbi_loss = self._computeSentenceLevelLoss(self.y, mask, lengths, None, block)
+                    all_loss.append(viterbi_loss)
+                else:
+                    print('crf=False, creating WLL')
+                    all_loss.append(self._computeWordLevelLoss(gold, mask, None, block))
+                l2_loss = tf.nn.l2_loss(tf.subtract(block, block_no_drop))
+                loss += self.drop_penalty * l2_loss
+
+            loss += tf.reduce_mean(all_loss)
+
+        return loss
+
+
+    def _computeSentenceLevelLoss(self, gold, mask, lengths, model, probs):
+        #zero_elements = tf.equal(lengths, tf.zeros_like(lengths))
+        #count_zeros_per_row = tf.reduce_sum(tf.to_int32(zero_elements), axis=1)
+        #flat_sequence_lengths = tf.add(tf.reduce_sum(lengths, 1),
+        #                               tf.scalar_mul(2, count_zeros_per_row))
+        print(probs.get_shape())
+        print(lengths.get_shape())
+        print(gold.get_shape())
+        ll, A = tf.contrib.crf.crf_log_likelihood(probs, gold, lengths, transition_params=self.A)
+        # print(model.probs)
+        #all_total = tf.reduce_sum(lengths, name="total")
+        return tf.reduce_mean(-ll)
+
+    def _computeWordLevelLoss(self, gold, mask, model, probs):
+
+        nc = len(self.labels)
+        # Cross entropy loss
+        cross_entropy = tf.one_hot(self.y, nc, axis=-1) * tf.log(
+            tf.clip_by_value(tf.nn.softmax(probs), 1e-10, 5.0))
+        cross_entropy = -tf.reduce_sum(cross_entropy, reduction_indices=2)
+        cross_entropy *= mask
+        cross_entropy = tf.reduce_sum(cross_entropy, reduction_indices=1)
+        all_loss = tf.reduce_mean(cross_entropy, name="loss")
+        return all_loss
+
+
+    # def block(self, wembed, kernel_sz, num_filt, num_layers, reuse=False):
+       
+    #     dilation_rate = 2
+    #     initialization = 'identity'
+    #     nonlinearity = 'relu'
+
+    #     input_tensor = wembed
+    #     with tf.variable_scope('iterated-block', reuse=reuse):
+    #         for i in range(0, num_layers):
+    #             if i == num_layers-1:
+    #                 dilation_rate = 1
+    #             filter_shape = [1, kernel_sz, num_filt, num_filt]
+    #             w = tf_utils.initialize_weights(filter_shape, 'conv-'+ str(i) + "_w", init_type=initialization, gain=nonlinearity, divisor=self.num_classes)
+    #             b = tf.get_variable('conv-'+ str(i) + "_b", initializer=tf.constant(0.0 if initialization == "identity" or initialization == "varscale" else 0.001, shape=[num_filt]))
+                        
+    #             conv = tf.nn.atrous_conv2d(input_tensor, 
+    #                                         w, 
+    #                                         rate=dilation_rate**i, 
+    #                                         padding="SAME", 
+    #                                         name='conv-'+ str(i))
+    #             conv_b = tf.nn.bias_add(conv, b)
+    #             input_tensor = tf_utils.apply_nonlinearity(conv_b, "relu")
+
+    #             tf.summary.histogram('conv-'+str(i), input_tensor)
+    #             # input_tensor = tf.nn.relu(input_tensor, name="relu-"+str(i))
+
+    #         return input_tensor
+
+
+    def params(self, labels, word_vec, char_vec, mxlen, 
+                maxw, rnntype, wsz, hsz, filtsz, num_filt=64, 
+                kernel_size=3, num_layers=4, num_iterations=3, 
+                crf=False):
+
+        self.num_iterations = num_iterations
+        self.num_layers = num_layers
+        self.kernel_size = kernel_size
+        self.num_filt = num_filt
+        self.crf = crf
+        char_dsz = char_vec.dsz
+        nc = len(labels)
+        self.num_classes=nc
+        self.x = tf.placeholder(tf.int32, [None, mxlen], name="x")
+        self.xch = tf.placeholder(tf.int32, [None, mxlen, maxw], name="xch")
+        self.y = tf.placeholder(tf.int32, [None, mxlen], name="y")
+        self.intermediate_probs = tf.placeholder(tf.int32, [None, mxlen, nc, num_iterations+2], name="y")
+        self.pkeep = tf.placeholder(tf.float32, name="pkeep")
+        self.word_keep = tf.placeholder(tf.float32, name="word_keep")
+        self.labels = labels
+        self.y_lut = revlut(labels)
+        self.phase = tf.placeholder(tf.bool, name="phase")
+        self.l2_loss = tf.constant(0.0)
+        
+        self.word_vocab = {}
+        if word_vec is not None:
+            self.word_vocab = word_vec.vocab
+        self.char_vocab = char_vec.vocab
+        self.char_dsz = char_dsz
+        self.wsz = wsz
+        self.mxlen = mxlen
+        self.drop_penalty = 0.001
+
+        
+        self.A = tf.get_variable("transitions", [self.num_classes, self.num_classes])
+        # if num_filt != nc:
+        #     raise RuntimeError('number of filters needs to be equal to number of classes!')
+
+        self.filtsz = [int(filt) for filt in filtsz.split(',') ]
+
+        with tf.variable_scope('output/'):
+            W = tf.Variable(tf.truncated_normal([self.num_filt, nc],
+                                                stddev = 0.1), name="W")
+            # W = tf.get_variable('W', initializer=tf.contrib.layers.xavier_initializer(), shape=[num_filt, nc])
+            b = tf.Variable(tf.constant(0.0, shape=[1,nc]), name="b")
+
+        intermediates = []
+
+
+        if word_vec is not None:
+            with tf.name_scope("WordLUT"):
+                self.Ww = tf.Variable(tf.constant(word_vec.weights, dtype=tf.float32), name = "W")
+
+                self.we0 = tf.scatter_update(self.Ww, tf.constant(0, dtype=tf.int32, shape=[1]), tf.zeros(shape=[1, word_vec.dsz]))
+
+        with tf.name_scope("CharLUT"):
+            self.Wc = tf.Variable(tf.constant(char_vec.weights, dtype=tf.float32), name = "W")
+
+            self.ce0 = tf.scatter_update(self.Wc, tf.constant(0, dtype=tf.int32, shape=[1]), tf.zeros(shape=[1, self.char_dsz]))
+
+        self.input_dropout_keep_prob = self.word_keep
+        self.middle_dropout_keep_prob = 1.00
+        self.hidden_dropout_keep_prob = self.pkeep
+
+        self.intermediate_probs, self.probs = self.forward(self.hidden_dropout_keep_prob, 
+                            self.input_dropout_keep_prob, 
+                            self.middle_dropout_keep_prob, 
+                            reuse=False)
+
+        self.loss = self.createLoss()
+
+
+    def forward(self, hidden_keep, input_keep, middle_keep, reuse=True):
+        """
+        used to determine the actual graph.
+
+        returns (intermediate_probs, probs). technically probs is the last layer of 
+        the intermediate probs.
+        """
         block_unflat_scores = []
 
         with tf.variable_scope("forward", reuse=reuse):
-            word_embeddings = tf.nn.embedding_lookup(self.w_e, input_x1)
+            with tf.control_dependencies([self.we0]):
+                wembed = tf.nn.embedding_lookup(self.Ww, self.x, name="embeddings")
 
-            input_list = [word_embeddings]
-            input_size = self.embedding_size
-            if self.use_characters:
-                char_embeddings_masked = tf.multiply(self.char_embeddings, tf.expand_dims(self.input_mask, 2))
-                input_list.append(char_embeddings_masked)
-                input_size += self.char_size
-            if self.use_shape:
-                shape_embeddings_shape = (self.shape_domain_size-1, self.shape_size)
-                w_s = tf_utils.initialize_embeddings(shape_embeddings_shape, name="w_s")
-                shape_embeddings = tf.nn.embedding_lookup(w_s, input_x2)
-                input_list.append(shape_embeddings)
-                input_size += self.shape_size
+            with tf.control_dependencies([self.ce0]):
+                xch_seq = tensorToSeq(self.xch)
+                cembed_seq = []
+                for i, xch_i in enumerate(xch_seq):
+                    cembed_seq.append(shared_char_word(self.Wc, xch_i, self.filtsz, self.char_dsz, self.wsz, None if (i == 0 and not reuse)  else True))
+                word_char = seqToTensor(cembed_seq)
 
-            initial_filter_width = self.layers_map[0][1]['width']
-            initial_num_filters = self.layers_map[0][1]['filters']
-            filter_shape = [1, initial_filter_width, input_size, initial_num_filters]
-            initial_layer_name = "conv0"
-
-            if not reuse:
-                print(input_list)
-                print("Adding initial layer %s: width: %d; filters: %d" % (
-                    initial_layer_name, initial_filter_width, initial_num_filters))
-
-            input_feats = tf.concat(axis=2, values=input_list)
+            input_feats = tf.concat([wembed, word_char], 2)
             input_feats_expanded = tf.expand_dims(input_feats, 1)
-            input_feats_expanded_drop = tf.nn.dropout(input_feats_expanded, input_dropout_keep_prob)
-            print("input feats expanded drop", input_feats_expanded_drop.get_shape())
+            input_feats_expanded_drop = tf.nn.dropout(input_feats_expanded, self.input_dropout_keep_prob)
 
             # first projection of embeddings
-            w = tf_utils.initialize_weights(filter_shape, initial_layer_name + "_w", init_type='xavier', gain='relu')
-            b = tf.get_variable(initial_layer_name + "_b", initializer=tf.constant(0.01, shape=[initial_num_filters]))
-            conv0 = tf.nn.conv2d(input_feats_expanded_drop, w, strides=[1, 1, 1, 1], padding="SAME", name=initial_layer_name)
+            filter_shape = [1, self.kernel_size, input_feats.get_shape()[2], self.num_filt]
+
+            w = tf_utils.initialize_weights(filter_shape, "conv_start" + "_w", init_type='xavier', gain='relu')
+            b = tf.get_variable("conv_start" + "_b", initializer=tf.constant(0.01, shape=[self.num_filt]))
+            conv0 = tf.nn.conv2d(input_feats_expanded_drop, w, strides=[1, 1, 1, 1], padding="SAME", name="conv_start")
             h0 = tf_utils.apply_nonlinearity(tf.nn.bias_add(conv0, b), 'relu')
 
             initial_inputs = [h0]
-            last_dims = initial_num_filters
+            last_dims = self.num_filt
+
+            self.share_repeats = True
+            self.projection = False
 
             # Stacked atrous convolutions
             last_output = tf.concat(axis=3, values=initial_inputs)
-            
 
-            for block in range(self.repeats):
-                print("last out shape", last_output.get_shape())
-                print("last dims", last_dims)
-
+            for iteration in range(self.num_iterations):
                 unflat_scores, h_concat_squeeze, last_output, last_dims = self.compute_block(last_output, last_dims)
                 block_unflat_scores.append(unflat_scores)
                 
-
-		return block_unflat_scores, h_concat_squeeze
+        return block_unflat_scores, unflat_scores
 
     def compute_block(self, last_output, last_dims):
         hidden_outputs = []
@@ -348,6 +415,8 @@ class DConv(SequentialModel):
                     conv_b = tf.nn.bias_add(conv, b)
                     h = tf_utils.apply_nonlinearity(conv_b, self.nonlinearity)
 
+                    # skip conn
+                    h = h + inner_last_output
                     # so, only apply "take" to last block (may want to change this later)
                     if take_layer:
                         hidden_outputs.append(h)
@@ -391,65 +460,12 @@ class DConv(SequentialModel):
 
         return unflat_scores, h_concat_squeeze, last_output, last_dims
 
-	def compute_loss(self, scores, scores_no_dropout, labels):
-
-        loss = tf.constant(0.0)
-
-        if self.viterbi:
-            zero_elements = tf.equal(self.sequence_lengths, tf.zeros_like(self.sequence_lengths))
-            count_zeros_per_row = tf.reduce_sum(tf.to_int32(zero_elements), axis=1)
-            flat_sequence_lengths = tf.add(tf.reduce_sum(self.sequence_lengths, 1),
-                                           tf.scalar_mul(2, count_zeros_per_row))
-
-            log_likelihood, transition_params = tf.contrib.crf.crf_log_likelihood(scores, labels, flat_sequence_lengths,
-                                                                                  transition_params=self.transition_params)
-            loss += tf.reduce_mean(-log_likelihood)
-        else:
-            if self.which_loss == "mean" or self.which_loss == "block":
-                losses = tf.nn.sparse_softmax_cross_entropy_with_logits(logits=scores, labels=labels)
-                masked_losses = tf.multiply(losses, self.input_mask)
-                loss += tf.div(tf.reduce_sum(masked_losses), tf.reduce_sum(self.input_mask))
-            elif self.which_loss == "sum":
-                losses = tf.nn.sparse_softmax_cross_entropy_with_logits(logits=scores, labels=labels)
-                masked_losses = tf.multiply(losses, self.input_mask)
-                loss += tf.reduce_sum(masked_losses)
-            elif self.which_loss == "margin":
-                # todo put into utils
-                # also todo put idx-into-3d as sep func
-                flat_labels = tf.reshape(labels, [-1])
-                batch_offsets = tf.multiply(tf.range(self.batch_size), self.max_seq_len * self.num_classes)
-                repeated_batch_offsets = tf_utils.repeat(batch_offsets, self.max_seq_len)
-                tok_offsets = tf.multiply(tf.range(self.max_seq_len), self.num_classes)
-                tiled_tok_offsets = tf.tile(tok_offsets, [self.batch_size])
-                indices = tf.add(tf.add(repeated_batch_offsets, tiled_tok_offsets), flat_labels)
-
-                # scores w/ true label set to -inf
-                sparse = tf.sparse_to_dense(indices, [self.batch_size * self.max_seq_len * self.num_classes], np.NINF)
-                loss_augmented_flat = tf.add(tf.reshape(scores, [-1]), sparse)
-                loss_augmented = tf.reshape(loss_augmented_flat, [self.batch_size, self.max_seq_len, self.num_classes])
-
-                # maxes excluding true label
-                max_scores = tf.reshape(tf.reduce_max(loss_augmented, [-1]), [-1])
-                sparse = tf.sparse_to_dense(indices, [self.batch_size * self.max_seq_len * self.num_classes],
-                                            -self.margin)
-                loss_augmented_flat = tf.add(tf.reshape(scores, [-1]), sparse)
-                label_scores = tf.gather(loss_augmented_flat, indices)
-                # margin + max_logit - correct_logit == max_logit - (correct - margin)
-                max2_diffs = tf.subtract(max_scores, label_scores)
-                mask = tf.reshape(self.input_mask, [-1])
-                loss += tf.reduce_mean(tf.multiply(mask, tf.nn.relu(max2_diffs)))
-        loss += self.l2_penalty * self.l2_loss
-
-        drop_loss = tf.nn.l2_loss(tf.subtract(scores, scores_no_dropout))
-        loss += self.drop_penalty * drop_loss
-		return loss
-
 def log(tensor):
         print(tensor)
 
-def highway_conns(inputs, wsz_all, n):
+def highway_conns(inputs, wsz_all, n, reuse):
     for i in range(n):
-        with tf.variable_scope("highway-%d" % i):
+        with tf.variable_scope("highway-%d" % i,reuse=reuse):
             W_p = tf.get_variable("W_p", [wsz_all, wsz_all])
             b_p = tf.get_variable("B_p", [1, wsz_all], initializer=tf.constant_initializer(0.0))
             proj = tf.nn.relu(tf.matmul(inputs, W_p) + b_p, "relu-proj")
@@ -501,8 +517,8 @@ def char_word_conv_embeddings(char_vec, filtsz, char_dsz, wsz, reuse):
     wsz_all = wsz * len(mots)
     combine = tf.reshape(tf.concat(values=mots, axis=3), [-1, wsz_all])
 
-    # joined = highway_conns(combine, wsz_all, 1)
-    joined = skip_conns(combine, wsz_all, 1, reuse)
+    joined = highway_conns(combine, wsz_all, 1, reuse)
+    # joined = skip_conns(combine, wsz_all, 1, reuse)
     return joined
 
 
