@@ -250,7 +250,7 @@ class DConv():
                 b = tf.get_variable('conv-'+ str(i) + "_b", initializer=tf.constant(0.0 if initialization == "identity" or initialization == "varscale" else 0.001, shape=[num_filt]))
                         
                 if i == num_layers-1:
-                    conv = self.gated_convolution(input_tensor, num_filt, i, reuse)
+                    conv = self.gated_convolution(input_tensor, num_filt, i, reuse=reuse)
                 else:
                     conv = tf.nn.atrous_conv2d(input_tensor, 
                                                 w, 
@@ -324,14 +324,14 @@ class DConv():
                                                     activation=tf.tanh,
                                                     kernel_initializer=tf.orthogonal_initializer(), #tf.contrib.layers.xavier_initializer(),
                                                     reuse=reuse,
-                                                    name='gated_conv-'+str(i))
+                                                    name='gated_conv-'+str(i)+'-conv')
             gate = tf.layers.conv2d(input_tensor, num_filt, kernel_width, 
                                                     padding='same', 
                                                     dilation_rate=1, 
                                                     activation=tf.sigmoid,
                                                     kernel_initializer=tf.orthogonal_initializer(), #tf.contrib.layers.xavier_initializer(),
                                                     reuse=reuse,
-                                                    name='gated_conv-'+str(i))
+                                                    name='gated_conv-'+str(i)+'-gate')
 
             gated_input = tf.multiply(gate, input_tensor) 
             gated_output_mat = tf.subtract(1, gate)
