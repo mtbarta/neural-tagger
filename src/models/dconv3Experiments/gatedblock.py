@@ -250,7 +250,7 @@ class DConv():
                 b = tf.get_variable('conv-'+ str(i) + "_b", initializer=tf.constant(0.0 if initialization == "identity" or initialization == "varscale" else 0.001, shape=[num_filt]))
                         
                 if i == num_layers-1:
-                    conv = self.gated_convolution(input_tensor, filter_shape, i, reuse)
+                    conv = self.gated_convolution(input_tensor, num_filt, i, reuse)
                 else:
                     conv = tf.nn.atrous_conv2d(input_tensor, 
                                                 w, 
