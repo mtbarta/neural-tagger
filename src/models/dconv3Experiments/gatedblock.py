@@ -315,7 +315,7 @@ class DConv():
         """
         as defined in https://arxiv.org/pdf/1710.00519.pdf
         """
-        shape = input_mat.get_shape()
+        shape = input_tensor.get_shape()
 
         with tf.variable_scope('gated_conv', reuse=reuse):
             conv = tf.layers.conv2d(input_tensor, num_filt, kernel_width, 
