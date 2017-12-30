@@ -334,7 +334,7 @@ class DConv():
                                                     name='gated_conv-'+str(i)+'-gate')
 
             gated_input = tf.multiply(gate, input_tensor) 
-            gated_output_mat = tf.subtract(1, gate)
+            gated_output_mat = tf.subtract(1.0, gate)
             gated_output = tf.multiply(gated_output_mat, conv)
             gated_conv = tf.add(gated_input, gated_output)
 
