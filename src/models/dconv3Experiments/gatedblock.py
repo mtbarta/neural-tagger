@@ -323,14 +323,12 @@ class DConv():
                                                     dilation_rate=1, 
                                                     activation=tf.tanh,
                                                     kernel_initializer=tf.orthogonal_initializer(), #tf.contrib.layers.xavier_initializer(),
-                                                    reuse=reuse,
                                                     name='gated_conv-'+str(i)+'-conv')
             gate = tf.layers.conv2d(input_tensor, num_filt, kernel_width, 
                                                     padding='same', 
                                                     dilation_rate=1, 
                                                     activation=tf.sigmoid,
                                                     kernel_initializer=tf.orthogonal_initializer(), #tf.contrib.layers.xavier_initializer(),
-                                                    reuse=reuse,
                                                     name='gated_conv-'+str(i)+'-gate')
 
             gated_input = tf.multiply(gate, input_tensor) 
