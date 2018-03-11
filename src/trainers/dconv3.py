@@ -242,26 +242,27 @@ class DConvTrainer:
                         tvars = tf.global_variables()
                         #grads, _ = tf.clip_by_global_norm(tf.gradients(model.loss, tvars), clip)
 
-                        with tf.control_dependencies(update_ops):
-                            if optim == 'adadelta':
-                                self.optimizer = tf.train.AdadeltaOptimizer(eta, 0.95, 1e-6)
-                            elif optim == 'adam':
-                                self.optimizer = tf.train.AdamOptimizer(eta, beta2=.999, epsilon=0.00001)
-                            elif optim == 'sgd':
-                                self.optimizer = tf.train.GradientDescentOptimizer(eta)
-                            else:
-                                self.optimizer = tf.train.MomentumOptimizer(eta, 0.9)
+                        # with tf.control_dependencies(update_ops):
+                        #     if optim == 'adadelta':
+                        #         self.optimizer = tf.train.AdadeltaOptimizer(eta, 0.95, 1e-6)
+                        #     elif optim == 'adam':
+                        #         self.optimizer = tf.train.AdamOptimizer(eta, beta2=.999, epsilon=0.00001)
+                        #     elif optim == 'sgd':
+                        #         self.optimizer = tf.train.GradientDescentOptimizer(eta)
+                        #     else:
+                        #         self.optimizer = tf.train.MomentumOptimizer(eta, 0.9)
 
                             # self.train_op = self.optimizer.minimize(self.loss, global_step=self.global_step)
                         # self.train_op = self.optimizer.apply_gradients(zip(grads, tvars),
                         #                                            global_step=self.global_step)
+                        
+                        learning_rate = tf.train.exponential_decay(eta, self.global_step, 100000, .95)
                         self.train_op = tf.contrib.layers.optimize_loss(model.loss,
                                 self.global_step,
-                                eta,
-                                self.optimizer,
+                                learning_rate,
+                                optim,
                                 gradient_noise_scale=0.001,
-                                clip_gradients=5.0,
-                                learning_rate_decay_fn=tf.train.exponential_decay)
+                                clip_gradients=5.0)
 
                         self.f1 = tf.Variable(0.0, name='f1')
                         self.f1_summary = tf.summary.scalar("f1", self.f1)
