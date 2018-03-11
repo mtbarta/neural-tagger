@@ -260,7 +260,8 @@ class DConvTrainer:
                                 eta,
                                 self.optimizer,
                                 gradient_noise_scale=0.001,
-                                clip_gradients=5.0)
+                                clip_gradients=5.0,
+                                leaning_rate_decay_fn=tf.train.exponential_decay)
 
                         self.f1 = tf.Variable(0.0, name='f1')
                         self.f1_summary = tf.summary.scalar("f1", self.f1)
